@@ -1,5 +1,5 @@
 shader_type spatial;
-render_mode depth_draw_opaque, cull_disabled, diffuse_burley, specular_schlick_ggx;
+render_mode blend_mix, depth_prepass_alpha, cull_back, diffuse_burley, specular_schlick_ggx;
 
 uniform vec4 shallow_color : source_color = vec4(0.03, 0.42, 0.54, 1.0);
 uniform vec4 deep_color : source_color = vec4(0.005, 0.045, 0.11, 1.0);
@@ -14,6 +14,12 @@ uniform float time_scale = 0.72;
 uniform float irregularity = 0.72;
 uniform float geometry_fade_start = 70.0;
 uniform float geometry_fade_end = 190.0;
+uniform vec2 boat_position = vec2(0.0, 0.0);
+uniform vec2 boat_forward = vec2(0.0, -1.0);
+uniform float boat_speed = 0.0;
+uniform float wake_strength = 0.0;
+uniform float impact_foam = 0.0;
+uniform float water_alpha = 0.74;
 
 varying vec3 world_position;
 varying float crest_value;
@@ -83,6 +89,30 @@ float ocean_height(vec2 p) {
 	h += wave_layer(p, vec2(0.86, -0.5), 3.1, 3.8, 0.08, 0.4);
 	h += (fbm(p * 0.065 + vec2(TIME * 0.035, -TIME * 0.02)) - 0.5) * 0.28 * irregularity;
 	h += (fbm(p * 0.19 + vec2(-TIME * 0.11, TIME * 0.07)) - 0.5) * 0.06 * irregularity;
+
+	vec2 forward = normalize(boat_forward);
+	vec2 right = vec2(forward.y, -forward.x);
+	vec2 rel = p - boat_position;
+	float behind = dot(rel, -forward);
+	float side = dot(rel, right);
+	float ahead = dot(rel, forward);
+	float speed_factor = clamp(boat_speed / 22.0, 0.0, 1.0) * wake_strength;
+
+	float bow_shape = exp(-abs(side) * 1.15) * exp(-abs(ahead - 3.4) * 0.55);
+	float hull_cut = -exp(-abs(side) * 1.35) * exp(-abs(ahead) * 0.42) * 0.32;
+	float bow_lift = exp(-abs(side) * 0.78) * exp(-abs(ahead - 4.0) * 0.55) * 0.28;
+	float bow_wave = sin(ahead * 4.6 - abs(side) * 2.2 - TIME * 7.8) * 0.24 * bow_shape;
+	bow_wave += sin(ahead * 8.0 - abs(side) * 4.7 - TIME * 12.5) * bow_shape * impact_foam * 0.13;
+
+	float wake_back = smoothstep(0.0, 2.0, behind) * exp(-behind * 0.035);
+	float wake_angle = abs(abs(side) - behind * 0.32);
+	float v_wake = exp(-wake_angle * 2.8) * wake_back;
+	float center_turbulence = exp(-abs(side) * 0.42) * exp(-behind * 0.075) * wake_back;
+	float side_trough = -exp(-abs(abs(side) - 1.35) * 2.0) * exp(-abs(ahead) * 0.34) * 0.18;
+	float wake_wave = sin(behind * 2.35 - abs(side) * 5.4 - TIME * 7.2) * v_wake * 0.42;
+	wake_wave += sin(behind * 4.2 - abs(side) * 8.6 - TIME * 10.5) * v_wake * 0.12;
+	wake_wave += (fbm(p * 0.7 + vec2(TIME * 0.8, -TIME * 0.35)) - 0.5) * center_turbulence * 0.28;
+	h += (hull_cut + bow_lift + bow_wave + side_trough + wake_wave) * speed_factor;
 	return h * wave_height;
 }
 
@@ -141,17 +171,30 @@ void fragment() {
 	float foam_mask = crest_value * slope_value;
 	foam_mask += smoothstep(0.68, 0.94, small_ripples * 0.72 + cross_ripples * 0.28) * crest_value * 0.55;
 	foam_mask *= mix(0.65, 1.25, fbm(p * 0.05 + vec2(9.4, TIME * 0.03))) * geometry_fade;
+
+	vec2 forward = normalize(boat_forward);
+	vec2 right = vec2(forward.y, -forward.x);
+	vec2 rel = p - boat_position;
+	float behind = dot(rel, -forward);
+	float side = dot(rel, right);
+	float ahead = dot(rel, forward);
+	float speed_factor = clamp(boat_speed / 20.0, 0.0, 1.0) * wake_strength;
+	float bow_foam = exp(-abs(side) * 1.65) * exp(-abs(ahead - 3.2) * 0.72);
+	float impact_bow = exp(-abs(side) * 1.05) * exp(-abs(ahead - 2.35) * 0.85);
+	float impact_spray = smoothstep(0.35, 0.95, fbm(p * 2.4 + vec2(TIME * 1.7, -TIME * 0.85)));
+	float wake_back = smoothstep(0.0, 2.0, behind) * exp(-behind * 0.033);
+	float wake_angle = abs(abs(side) - behind * 0.32);
+	float v_foam = exp(-wake_angle * 4.2) * wake_back;
+	float churn = exp(-abs(side) * 0.55) * exp(-behind * 0.068) * wake_back;
+	float broken_water = smoothstep(0.42, 0.92, fbm(p * 1.15 + vec2(-TIME * 0.9, TIME * 0.48)));
+	foam_mask += (bow_foam * 0.95 + v_foam * 0.85 + churn * broken_water * 0.7) * speed_factor;
+	foam_mask += impact_bow * impact_spray * impact_foam * 1.35;
+	foam_mask += exp(-abs(abs(side) - 1.15) * 2.6) * exp(-abs(ahead) * 0.42) * impact_foam * 0.55;
 	foam_mask = smoothstep(1.0 - foam_amount, 1.0, foam_mask);
 
-	if (!FRONT_FACING) {
-		ALBEDO = mix(underside_color.rgb, deep_color.rgb, 0.32);
-		ROUGHNESS = 0.72;
-		METALLIC = 0.0;
-		SPECULAR = 0.08;
-	} else {
-		ALBEDO = mix(water, foam_color.rgb, foam_mask);
-		ROUGHNESS = mix(0.015, 0.17, foam_mask);
-		METALLIC = 0.0;
-		SPECULAR = mix(1.0, 0.35, foam_mask);
-	}
+	ALBEDO = mix(water, foam_color.rgb, foam_mask);
+	ROUGHNESS = mix(0.015, 0.17, foam_mask);
+	METALLIC = 0.0;
+	SPECULAR = mix(1.0, 0.35, foam_mask);
+	ALPHA = mix(water_alpha, 0.98, foam_mask);
 }
