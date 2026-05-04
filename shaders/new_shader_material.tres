@@ -1,0 +1,34 @@
+[gd_resource type="ShaderMaterial" format=3 uid="uid://hr7qa7b0ue6t"]
+
+[ext_resource type="Shader" uid="uid://60q07k8ti6gy" path="res://shaders/realistic_ocean.gdshader" id="1_vo683"]
+
+[resource]
+render_priority = 0
+shader = ExtResource("1_vo683")
+shader_parameter/shallow_color = Color(0.03, 0.42, 0.54, 1)
+shader_parameter/deep_color = Color(0.005, 0.045, 0.11, 1)
+shader_parameter/underside_color = Color(0, 0.018, 0.035, 1)
+shader_parameter/foam_color = Color(0.92, 0.98, 1, 1)
+shader_parameter/wave_height = 0.1
+shader_parameter/choppiness = 0.38
+shader_parameter/foam_amount = 0.55
+shader_parameter/fresnel_power = 4.5
+shader_parameter/time_scale = 0.72
+shader_parameter/irregularity = 0.72
+shader_parameter/geometry_fade_start = 70.0
+shader_parameter/geometry_fade_end = 190.0
+shader_parameter/boat_position = Vector2(0, 0)
+shader_parameter/boat_forward = Vector2(0, -1)
+shader_parameter/boat_speed = 0.0
+shader_parameter/wake_strength = 0.0
+shader_parameter/impact_foam = 0.0
+shader_parameter/water_alpha = 0.74
+shader_parameter/interaction_time = 0.0
+shader_parameter/mouse_ripple_0 = Vector4(9999, 9999, -1000, 0)
+shader_parameter/mouse_ripple_1 = Vector4(9999, 9999, -1000, 0)
+shader_parameter/mouse_ripple_2 = Vector4(9999, 9999, -1000, 0)
+shader_parameter/mouse_ripple_3 = Vector4(9999, 9999, -1000, 0)
+shader_parameter/mouse_ripple_4 = Vector4(9999, 9999, -1000, 0)
+shader_parameter/mouse_ripple_5 = Vector4(9999, 9999, -1000, 0)
+shader_parameter/mouse_ripple_6 = Vector4(9999, 9999, -1000, 0)
+shader_parameter/mouse_ripple_7 = Vector4(9999, 9999, -1000, 0)

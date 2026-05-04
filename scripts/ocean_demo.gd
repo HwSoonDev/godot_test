@@ -14,10 +14,15 @@ const BOAT_SIDE_DRAG := 5.8
 const WAVE_HEIGHT := 0.98
 const WAVE_TIME_SCALE := 0.72
 const IRREGULARITY := 0.70
+const MOUSE_RIPPLE_COUNT := 8
+const MOUSE_RIPPLE_MIN_DISTANCE := 1.15
+const MOUSE_RIPPLE_FORCE := 1.0
+const MOUSE_RIPPLE_LIFETIME := 2.2
 
 var camera: Camera3D
 var boat: Node3D
 var ocean_material: ShaderMaterial
+var dof_material: ShaderMaterial
 var boat_velocity := Vector3.ZERO
 var boat_vertical_velocity: float = 0.0
 var boat_heading: float = 0.0
@@ -25,6 +30,11 @@ var boat_pitch: float = 0.0
 var boat_roll: float = 0.0
 var wake_power: float = 0.0
 var impact_foam: float = 0.0
+var mouse_ripples: Array[Vector4] = []
+var mouse_ripple_slot: int = 0
+var is_dragging_water := false
+var last_mouse_water_position := Vector2.ZERO
+var has_mouse_water_position := false
 
 
 func _ready() -> void:
@@ -39,13 +49,29 @@ func _process(delta: float) -> void:
 		return
 
 	_update_boat_controls(delta)
+	_update_mouse_ripple_input()
 	_float_boat_on_waves(delta)
 	_update_ocean_wake()
 	_update_camera(delta)
 
 
+func _input(event: InputEvent) -> void:
+	if Engine.is_editor_hint():
+		return
+
+	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
+		is_dragging_water = event.pressed
+		has_mouse_water_position = false
+		if is_dragging_water:
+			_update_mouse_ripple_input(true)
+
+	if event is InputEventMouseMotion and is_dragging_water:
+		_update_mouse_ripple_input()
+
+
 func _rebuild_scene() -> void:
 	_clear_generated()
+	_reset_mouse_ripples()
 	_register_input()
 	_add_environment()
 	_add_lighting()
@@ -122,22 +148,10 @@ func _add_environment() -> void:
 
 
 func _add_lighting() -> void:
-	var sun := DirectionalLight3D.new()
-	sun.name = "Sun"
-	_mark_generated(sun)
-	sun.rotation_degrees = Vector3(-34.0, -42.0, 0.0)
-	sun.light_color = Color.html("#fff3d2")
-	sun.light_energy = 3.2
-	sun.shadow_enabled = true
-	add_child(sun)
-
-	var fill := DirectionalLight3D.new()
-	fill.name = "Cool Fill"
-	_mark_generated(fill)
-	fill.rotation_degrees = Vector3(-18.0, 130.0, 0.0)
-	fill.light_color = Color.html("#8ebeff")
-	fill.light_energy = 0.38
-	add_child(fill)
+	if get_node_or_null("Sun") == null:
+		push_warning("OceanDemo expects a scene-owned Sun DirectionalLight3D.")
+	if get_node_or_null("Cool Fill") == null:
+		push_warning("OceanDemo expects a scene-owned Cool Fill DirectionalLight3D.")
 
 
 func _add_ocean() -> void:
@@ -181,6 +195,7 @@ func _add_ocean() -> void:
 	ocean_material.set_shader_parameter("geometry_fade_end", 150.0)
 	ocean_material.set_shader_parameter("water_alpha", 0.74)
 	ocean_material.set_shader_parameter("impact_foam", 0.0)
+	_push_mouse_ripples_to_shader()
 	ocean.material_override = ocean_material
 
 
@@ -260,14 +275,22 @@ func _add_boat() -> void:
 
 
 func _add_camera() -> void:
-	camera = Camera3D.new()
-	camera.name = "Follow Camera"
-	_mark_generated(camera)
-	camera.fov = 58.0
-	camera.near = 0.05
-	camera.far = 900.0
+	camera = get_node_or_null("Follow Camera") as Camera3D
+	if camera == null:
+		push_warning("OceanDemo expects a scene-owned Follow Camera Camera3D.")
+		return
+
 	camera.current = true
-	add_child(camera)
+	if camera.attributes != null:
+		camera.attributes.set("dof_blur_far_enabled", false)
+		camera.attributes.set("dof_blur_near_enabled", false)
+
+	var dof_quad := camera.get_node_or_null("Cinematic DOF") as MeshInstance3D
+	if dof_quad != null:
+		dof_material = dof_quad.material_override as ShaderMaterial
+	else:
+		push_warning("Follow Camera expects a Cinematic DOF MeshInstance3D child.")
+
 	_update_camera(1.0)
 
 
@@ -321,7 +344,7 @@ func _add_ui() -> void:
 	add_child(canvas)
 
 	var label := Label.new()
-	label.text = "W/S throttle  |  A/D steer  |  R reset"
+	label.text = "W/S throttle  |  A/D steer  |  R reset  |  Left-drag water for ripples"
 	label.position = Vector2(24, 22)
 	label.add_theme_font_size_override("font_size", 20)
 	canvas.add_child(label)
@@ -420,6 +443,8 @@ func _update_ocean_wake() -> void:
 	ocean_material.set_shader_parameter("boat_speed", boat_velocity.length())
 	ocean_material.set_shader_parameter("wake_strength", wake_power)
 	ocean_material.set_shader_parameter("impact_foam", impact_foam)
+	ocean_material.set_shader_parameter("interaction_time", Time.get_ticks_msec() / 1000.0)
+	_push_mouse_ripples_to_shader()
 
 
 func _update_camera(delta: float) -> void:
@@ -431,6 +456,17 @@ func _update_camera(delta: float) -> void:
 	var camera_blend: float = 1.0 - pow(0.025, delta)
 	camera.global_position = camera.global_position.lerp(target_position, camera_blend)
 	camera.look_at(boat.position + forward * 5.0 + Vector3.UP * 1.1, Vector3.UP)
+	_update_camera_depth_of_field(camera.global_position.distance_to(boat.position))
+
+
+func _update_camera_depth_of_field(focus_distance: float) -> void:
+	if dof_material == null:
+		return
+
+	dof_material.set_shader_parameter("focus_distance", focus_distance)
+	dof_material.set_shader_parameter("focus_range", 3.6)
+	dof_material.set_shader_parameter("max_radius_px", 7.5)
+	dof_material.set_shader_parameter("viewport_size", get_viewport().get_visible_rect().size)
 
 
 func _boat_forward() -> Vector3:
@@ -444,7 +480,87 @@ func _sample_ocean_height(p: Vector2, time: float) -> float:
 	h += _wave_layer(p, Vector2(-0.78, 0.62), 6.0, 2.25, 0.22, 3.1, time)
 	h += _wave_layer(p, Vector2(0.86, -0.5), 3.1, 3.8, 0.08, 0.4, time)
 	h += (sin(p.x * 0.31 + time * 0.9) + cos(p.y * 0.27 - time * 0.6)) * 0.035 * IRREGULARITY
-	return h * WAVE_HEIGHT
+	return (h + _sample_mouse_displacement_height(p, time)) * WAVE_HEIGHT
+
+
+func _reset_mouse_ripples() -> void:
+	mouse_ripples.clear()
+	for i in range(MOUSE_RIPPLE_COUNT):
+		mouse_ripples.append(Vector4(9999.0, 9999.0, -1000.0, 0.0))
+	mouse_ripple_slot = 0
+	has_mouse_water_position = false
+
+
+func _update_mouse_ripple_input(force_ripple: bool = false) -> void:
+	if camera == null or not is_dragging_water:
+		return
+
+	var mouse := get_viewport().get_mouse_position()
+	var origin := camera.project_ray_origin(mouse)
+	var direction := camera.project_ray_normal(mouse)
+	if absf(direction.y) < 0.001:
+		return
+
+	var ray_distance := -origin.y / direction.y
+	if ray_distance < 0.0:
+		return
+
+	var hit := origin + direction * ray_distance
+	var water_position := Vector2(hit.x, hit.z)
+	if water_position.length() > 245.0:
+		return
+
+	var should_spawn := force_ripple or not has_mouse_water_position
+	if has_mouse_water_position:
+		should_spawn = should_spawn or water_position.distance_to(last_mouse_water_position) >= MOUSE_RIPPLE_MIN_DISTANCE
+
+	if should_spawn:
+		var strength := MOUSE_RIPPLE_FORCE
+		if has_mouse_water_position:
+			strength += clampf(water_position.distance_to(last_mouse_water_position) * 0.18, 0.0, 0.9)
+		_add_mouse_ripple(water_position, strength)
+		last_mouse_water_position = water_position
+		has_mouse_water_position = true
+
+
+func _add_mouse_ripple(position: Vector2, strength: float) -> void:
+	if mouse_ripples.size() != MOUSE_RIPPLE_COUNT:
+		_reset_mouse_ripples()
+
+	mouse_ripples[mouse_ripple_slot] = Vector4(position.x, position.y, Time.get_ticks_msec() / 1000.0, strength)
+	mouse_ripple_slot = (mouse_ripple_slot + 1) % MOUSE_RIPPLE_COUNT
+
+
+func _push_mouse_ripples_to_shader() -> void:
+	if ocean_material == null:
+		return
+
+	if mouse_ripples.size() != MOUSE_RIPPLE_COUNT:
+		_reset_mouse_ripples()
+
+	for i in range(MOUSE_RIPPLE_COUNT):
+		ocean_material.set_shader_parameter("mouse_ripple_%d" % i, mouse_ripples[i])
+
+
+func _sample_mouse_displacement_height(p: Vector2, time: float) -> float:
+	var total := 0.0
+	for ripple in mouse_ripples:
+		var age := time - ripple.z
+		if age < 0.0 or age > MOUSE_RIPPLE_LIFETIME:
+			continue
+
+		var distance := p.distance_to(Vector2(ripple.x, ripple.y))
+		var progress := clampf(age / MOUSE_RIPPLE_LIFETIME, 0.0, 1.0)
+		var fade := pow(1.0 - progress, 1.35)
+		var spread := lerpf(0.35, 2.6, progress)
+		var rim_width := lerpf(0.28, 0.85, progress)
+		var center_width := spread * 0.42
+		var center_dip := -exp(-pow(distance / maxf(center_width, 0.08), 2.0)) * 0.12 * fade
+		var raised_rim := exp(-pow((distance - spread) / rim_width, 2.0)) * 0.58 * fade
+		var outer_shoulder := exp(-pow((distance - spread * 1.55) / (rim_width * 1.8), 2.0)) * 0.10 * fade
+		total += (center_dip + raised_rim + outer_shoulder) * ripple.w
+
+	return total
 
 
 func _sample_wave_push(p: Vector2, time: float) -> Vector3:

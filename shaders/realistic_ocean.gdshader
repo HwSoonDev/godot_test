@@ -20,6 +20,15 @@ uniform float boat_speed = 0.0;
 uniform float wake_strength = 0.0;
 uniform float impact_foam = 0.0;
 uniform float water_alpha = 0.74;
+uniform float interaction_time = 0.0;
+uniform vec4 mouse_ripple_0 = vec4(9999.0, 9999.0, -1000.0, 0.0);
+uniform vec4 mouse_ripple_1 = vec4(9999.0, 9999.0, -1000.0, 0.0);
+uniform vec4 mouse_ripple_2 = vec4(9999.0, 9999.0, -1000.0, 0.0);
+uniform vec4 mouse_ripple_3 = vec4(9999.0, 9999.0, -1000.0, 0.0);
+uniform vec4 mouse_ripple_4 = vec4(9999.0, 9999.0, -1000.0, 0.0);
+uniform vec4 mouse_ripple_5 = vec4(9999.0, 9999.0, -1000.0, 0.0);
+uniform vec4 mouse_ripple_6 = vec4(9999.0, 9999.0, -1000.0, 0.0);
+uniform vec4 mouse_ripple_7 = vec4(9999.0, 9999.0, -1000.0, 0.0);
 
 varying vec3 world_position;
 varying float crest_value;
@@ -81,6 +90,65 @@ float wave_layer(vec2 p, vec2 dir, float wavelength, float speed, float amplitud
 	return natural_wave * local_amp;
 }
 
+float mouse_ripple_event(vec2 p, vec4 ripple) {
+	float age = interaction_time - ripple.z;
+	if (age < 0.0 || age > 2.2 || ripple.w <= 0.0) {
+		return 0.0;
+	}
+
+	float distance_to_touch = distance(p, ripple.xy);
+	float progress = clamp(age / 2.2, 0.0, 1.0);
+	float fade = pow(1.0 - progress, 1.35);
+	float spread = mix(0.35, 2.6, progress);
+	float rim_width = mix(0.28, 0.85, progress);
+	float center_width = max(spread * 0.42, 0.08);
+	float center_dip = -exp(-pow(distance_to_touch / center_width, 2.0)) * 0.12 * fade;
+	float raised_rim = exp(-pow((distance_to_touch - spread) / rim_width, 2.0)) * 0.58 * fade;
+	float outer_shoulder = exp(-pow((distance_to_touch - spread * 1.55) / (rim_width * 1.8), 2.0)) * 0.10 * fade;
+	return (center_dip + raised_rim + outer_shoulder) * ripple.w;
+}
+
+float mouse_ripple_height(vec2 p) {
+	float h = 0.0;
+	h += mouse_ripple_event(p, mouse_ripple_0);
+	h += mouse_ripple_event(p, mouse_ripple_1);
+	h += mouse_ripple_event(p, mouse_ripple_2);
+	h += mouse_ripple_event(p, mouse_ripple_3);
+	h += mouse_ripple_event(p, mouse_ripple_4);
+	h += mouse_ripple_event(p, mouse_ripple_5);
+	h += mouse_ripple_event(p, mouse_ripple_6);
+	h += mouse_ripple_event(p, mouse_ripple_7);
+	return h;
+}
+
+float mouse_ripple_foam_event(vec2 p, vec4 ripple) {
+	float age = interaction_time - ripple.z;
+	if (age < 0.0 || age > 2.2 || ripple.w <= 0.0) {
+		return 0.0;
+	}
+
+	float distance_to_touch = distance(p, ripple.xy);
+	float progress = clamp(age / 2.2, 0.0, 1.0);
+	float spread = mix(0.35, 2.6, progress);
+	float rim_width = mix(0.28, 0.85, progress);
+	float fade = pow(1.0 - progress, 1.6);
+	float pushed_water = exp(-pow((distance_to_touch - spread) / rim_width, 2.0));
+	return pushed_water * fade * ripple.w;
+}
+
+float mouse_ripple_foam(vec2 p) {
+	float foam = 0.0;
+	foam += mouse_ripple_foam_event(p, mouse_ripple_0);
+	foam += mouse_ripple_foam_event(p, mouse_ripple_1);
+	foam += mouse_ripple_foam_event(p, mouse_ripple_2);
+	foam += mouse_ripple_foam_event(p, mouse_ripple_3);
+	foam += mouse_ripple_foam_event(p, mouse_ripple_4);
+	foam += mouse_ripple_foam_event(p, mouse_ripple_5);
+	foam += mouse_ripple_foam_event(p, mouse_ripple_6);
+	foam += mouse_ripple_foam_event(p, mouse_ripple_7);
+	return clamp(foam, 0.0, 1.0);
+}
+
 float ocean_height(vec2 p) {
 	float h = 0.0;
 	h += wave_layer(p, vec2(1.0, 0.18), 16.0, 1.18, 0.72, 0.0);
@@ -113,6 +181,7 @@ float ocean_height(vec2 p) {
 	wake_wave += sin(behind * 4.2 - abs(side) * 8.6 - TIME * 10.5) * v_wake * 0.12;
 	wake_wave += (fbm(p * 0.7 + vec2(TIME * 0.8, -TIME * 0.35)) - 0.5) * center_turbulence * 0.28;
 	h += (hull_cut + bow_lift + bow_wave + side_trough + wake_wave) * speed_factor;
+	h += mouse_ripple_height(p);
 	return h * wave_height;
 }
 
@@ -190,6 +259,7 @@ void fragment() {
 	foam_mask += (bow_foam * 0.95 + v_foam * 0.85 + churn * broken_water * 0.7) * speed_factor;
 	foam_mask += impact_bow * impact_spray * impact_foam * 1.35;
 	foam_mask += exp(-abs(abs(side) - 1.15) * 2.6) * exp(-abs(ahead) * 0.42) * impact_foam * 0.55;
+	foam_mask += mouse_ripple_foam(p) * 0.75;
 	foam_mask = smoothstep(1.0 - foam_amount, 1.0, foam_mask);
 
 	ALBEDO = mix(water, foam_color.rgb, foam_mask);

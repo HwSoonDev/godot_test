@@ -1,6 +1,51 @@
-[gd_scene format=3 uid="uid://caaui1lq0qjdc"]
+[gd_scene load_steps=6 format=3 uid="uid://caaui1lq0qjdc"]
 
 [ext_resource type="Script" uid="uid://bldijeg00ux57" path="res://scripts/ocean_demo.gd" id="1_ocean_demo"]
+[ext_resource type="Shader" path="res://shaders/cinematic_dof.gdshader" id="2_cinematic_dof"]
+
+[sub_resource type="CameraAttributesPractical" id="CameraAttributesPractical_ocean_dof"]
+dof_blur_far_distance = 22.0
+dof_blur_far_transition = 24.0
+dof_blur_near_distance = 10.0
+dof_blur_near_transition = 6.0
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_cinematic_dof"]
+shader = ExtResource("2_cinematic_dof")
+shader_parameter/focus_distance = 15.0
+shader_parameter/focus_range = 4.0
+shader_parameter/max_radius_px = 7.0
+shader_parameter/near_blur_strength = 0.58
+shader_parameter/far_blur_strength = 0.92
+shader_parameter/bokeh_bias = 0.16
+shader_parameter/viewport_size = Vector2(1280, 720)
+
+[sub_resource type="QuadMesh" id="QuadMesh_cinematic_dof"]
+size = Vector2(2, 2)
 
 [node name="OceanDemo" type="Node3D" unique_id=996101382]
 script = ExtResource("1_ocean_demo")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+transform = Transform3D(0.743145, 0.379097, -0.551096, 0, 0.824126, 0.566406, 0.669131, -0.420848, 0.612373, 0, 0, 0)
+light_color = Color(1, 0.952941, 0.823529, 1)
+light_energy = 3.2
+shadow_enabled = true
+
+[node name="Cool Fill" type="DirectionalLight3D" parent="."]
+transform = Transform3D(-0.642788, 0.234923, 0.729466, 0, 0.951057, -0.309017, -0.766044, -0.198632, -0.611327, 0, 0, 0)
+light_color = Color(0.556863, 0.745098, 1, 1)
+light_energy = 0.38
+
+[node name="Follow Camera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 0.819152, 0.573576, 0, -0.573576, 0.819152, 0, 7, 13)
+attributes = SubResource("CameraAttributesPractical_ocean_dof")
+fov = 58.0
+near = 0.05
+far = 900.0
+current = true
+
+[node name="Cinematic DOF" type="MeshInstance3D" parent="Follow Camera"]
+extra_cull_margin = 16384.0
+cast_shadow = 0
+mesh = SubResource("QuadMesh_cinematic_dof")
+material_override = SubResource("ShaderMaterial_cinematic_dof")
